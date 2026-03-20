@@ -70,6 +70,21 @@ systemctl --user stop nanoclaw
 systemctl --user restart nanoclaw
 ```
 
+## Branch Strategy
+
+- **`main`** — mirrors upstream `qwibitai/nanoclaw`. No custom commits. Used for syncing with upstream.
+- **`deploy`** — the deployed/running version. Contains all customizations (Priority ERP MCP, assistant rename, WhatsApp channel merge) on top of `main`.
+
+Sync workflow:
+```bash
+# Pull upstream changes into main
+git checkout main && git pull origin main
+
+# Update deploy with new upstream commits
+git checkout deploy && git rebase main
+git push origin deploy
+```
+
 ## Troubleshooting
 
 **WhatsApp not connecting after upgrade:** WhatsApp is now a separate skill, not bundled in core. Run `/add-whatsapp` (or `npx tsx scripts/apply-skill.ts .claude/skills/add-whatsapp && npm run build`) to install it. Existing auth credentials and groups are preserved.
