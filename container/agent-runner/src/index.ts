@@ -17,7 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execFile } from 'child_process';
-import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -29,6 +29,148 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+}
+
+// --- Priority ERP write confirmation safeguard ---
+
+const CONFIRMATION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const IPC_MESSAGES_DIR = '/workspace/ipc/messages';
+
+let pendingConfirmation: {
+  toolName: string;
+  resolve: (approved: boolean) => void;
+  cleanup: () => void;
+} | null = null;
+
+const PRIORITY_WRITE_TOOL_PREFIXES = [
+  'mcp__priority-erp__create_',
+  'mcp__priority-erp__update_',
+  'mcp__priority-erp__delete_',
+];
+
+function isPriorityWriteTool(toolName: string): boolean {
+  return PRIORITY_WRITE_TOOL_PREFIXES.some(prefix => toolName.startsWith(prefix));
+}
+
+function writeIpcMessage(text: string, chatJid: string, groupFolder: string): void {
+  const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`;
+  const filepath = path.join(IPC_MESSAGES_DIR, filename);
+  const data = {
+    type: 'message',
+    chatJid,
+    text,
+    groupFolder,
+    timestamp: new Date().toISOString(),
+  };
+  const tempPath = `${filepath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+  fs.renameSync(tempPath, filepath);
+}
+
+function formatConfirmationMessage(toolName: string, toolInput: unknown): string {
+  // Extract operation type from tool name (e.g. mcp__priority-erp__create_entity_record → create)
+  const match = toolName.match(/^mcp__priority-erp__(create|update|delete)_(.+)$/);
+  const operation = match?.[1] ?? 'write';
+  const entityPart = match?.[2]?.replace(/_/g, ' ') ?? toolName;
+
+  let dataSummary = '';
+  if (toolInput && typeof toolInput === 'object') {
+    const json = JSON.stringify(toolInput, null, 2);
+    dataSummary = json.length > 500 ? json.slice(0, 500) + '...' : json;
+  }
+
+  const lines = [
+    `⚠️ *Priority ERP Write Operation*`,
+    ``,
+    `Operation: *${operation} ${entityPart}*`,
+  ];
+  if (dataSummary) {
+    lines.push(`Data: \`${dataSummary}\``);
+  }
+  lines.push(``);
+  lines.push(`Reply *yes* to approve or *no* to cancel.`);
+  lines.push(`השב *כן* לאישור או *לא* לביטול.`);
+  lines.push(``);
+  lines.push(`_Auto-denied in 5 minutes if no response._`);
+
+  return lines.join('\n');
+}
+
+function parseApproval(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  const approvalWords = ['yes', 'y', 'ok', 'approve', 'כן', 'אישור'];
+  return approvalWords.some(word => normalized === word);
+}
+
+function permissionResult(decision: 'allow' | 'deny', reason: string) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse' as const,
+      permissionDecision: decision,
+      permissionDecisionReason: reason,
+    },
+  };
+}
+
+function createPreToolUseHook(containerInput: ContainerInput): HookCallback {
+  return async (input, _toolUseId, { signal }) => {
+    const preToolUse = input as PreToolUseHookInput;
+    const toolName = preToolUse.tool_name;
+
+    if (!isPriorityWriteTool(toolName)) {
+      return {};
+    }
+
+    if (containerInput.isScheduledTask) {
+      return permissionResult('deny', 'Priority ERP write operations are not allowed in scheduled tasks — no user is available to approve.');
+    }
+
+    // Only one confirmation can be pending — overlapping approvals would be ambiguous
+    if (pendingConfirmation) {
+      log(`Denying overlapping write confirmation for: ${toolName} (already waiting on: ${pendingConfirmation.toolName})`);
+      return permissionResult('deny', `Another Priority ERP write operation (${pendingConfirmation.toolName}) is already awaiting user confirmation. Only one confirmation can be pending at a time.`);
+    }
+
+    log(`Priority write confirmation required for: ${toolName}`);
+
+    const confirmationText = formatConfirmationMessage(toolName, preToolUse.tool_input);
+    writeIpcMessage(confirmationText, containerInput.chatJid, containerInput.groupFolder);
+
+    const approved = await new Promise<boolean>((resolve) => {
+      const onAbort = () => {
+        if (pendingConfirmation?.resolve === resolve) {
+          log(`Confirmation aborted for: ${toolName}`);
+          cleanup();
+          resolve(false);
+        }
+      };
+
+      const timer = setTimeout(() => {
+        if (pendingConfirmation?.resolve === resolve) {
+          log(`Confirmation timed out for: ${toolName}`);
+          cleanup();
+          resolve(false);
+          writeIpcMessage('⏰ Operation timed out — automatically cancelled.', containerInput.chatJid, containerInput.groupFolder);
+        }
+      }, CONFIRMATION_TIMEOUT_MS);
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', onAbort);
+        pendingConfirmation = null;
+      };
+
+      pendingConfirmation = { toolName, resolve, cleanup };
+
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+
+    log(`User ${approved ? 'approved' : 'denied/timed out'}: ${toolName}`);
+    return permissionResult(
+      approved ? 'allow' : 'deny',
+      approved ? 'User approved the operation.' : 'User denied or did not respond to the confirmation request.',
+    );
+  };
 }
 
 interface ContainerOutput {
@@ -350,14 +492,33 @@ async function runQuery(
     if (shouldClose()) {
       log('Close sentinel detected during query, ending stream');
       closedDuringQuery = true;
+      // If waiting for confirmation, deny before closing
+      if (pendingConfirmation) {
+        const { resolve: confirmResolve, cleanup: confirmCleanup } = pendingConfirmation;
+        confirmCleanup();
+        confirmResolve(false);
+      }
       stream.end();
       ipcPolling = false;
       return;
     }
     const messages = drainIpcInput();
     for (const text of messages) {
-      log(`Piping IPC message into active query (${text.length} chars)`);
-      stream.push(text);
+      if (pendingConfirmation) {
+        // Route first message to pending confirmation
+        const approved = parseApproval(text);
+        log(`Confirmation response received: "${text}" → ${approved ? 'approved' : 'denied'}`);
+        const ackText = approved
+          ? '✅ Operation approved.'
+          : '❌ Operation cancelled.';
+        writeIpcMessage(ackText, containerInput.chatJid, containerInput.groupFolder);
+        const { resolve: confirmResolve, cleanup: confirmCleanup } = pendingConfirmation;
+        confirmCleanup();
+        confirmResolve(approved);
+      } else {
+        log(`Piping IPC message into active query (${text.length} chars)`);
+        stream.push(text);
+      }
     }
     setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
   };
@@ -432,6 +593,7 @@ async function runQuery(
         },
       },
       hooks: {
+        PreToolUse: [{ hooks: [createPreToolUseHook(containerInput)] }],
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
       },
     }
@@ -546,6 +708,7 @@ async function main(): Promise<void> {
 
   let sessionId = containerInput.sessionId;
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
+  fs.mkdirSync(IPC_MESSAGES_DIR, { recursive: true });
 
   // Clean up stale _close sentinel from previous container runs
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
