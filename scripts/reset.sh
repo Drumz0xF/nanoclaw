@@ -27,11 +27,13 @@ echo ""
 echo "Will be DELETED:"
 echo "  - WhatsApp auth session    (store/auth/)"
 echo "  - Auth status files        (store/auth-status.txt, store/qr-auth.html)"
-echo "  - Message database         (store/messages.db)"
+echo "  - Message database + WAL   (store/messages.db, -shm, -wal)"
 echo "  - Agent sessions           (data/sessions/)"
 echo "  - IPC state                (data/ipc/)"
+echo "  - Remote control state     (data/remote-control.*)"
 echo "  - Group memory & logs      (groups/*/ except global)"
 echo "  - Application logs         (logs/)"
+echo "  - Agent containers         (docker rm nanoclaw-*)"
 echo "  - User config              (~/.config/nanoclaw/)"
 echo ""
 echo "Will be RESET to placeholders:"
@@ -68,6 +70,12 @@ else
   info "No running agent containers found"
 fi
 
+STALE_CONTAINERS=$(docker ps -aq --filter "name=nanoclaw-" 2>/dev/null || true)
+if [[ -n "$STALE_CONTAINERS" ]]; then
+  info "Removing agent containers..."
+  echo "$STALE_CONTAINERS" | xargs docker rm -f 2>/dev/null || warn "Some agent containers failed to remove"
+fi
+
 # --- Delete runtime state ---
 info "Removing WhatsApp auth store..."
 rm -rf "$PROJECT_ROOT/store/auth"
@@ -77,7 +85,7 @@ rm -f "$PROJECT_ROOT/store/auth-status.txt"
 rm -f "$PROJECT_ROOT/store/qr-auth.html"
 
 info "Removing message database..."
-rm -f "$PROJECT_ROOT/store/messages.db"
+rm -f "$PROJECT_ROOT/store/messages.db" "$PROJECT_ROOT/store/messages.db-shm" "$PROJECT_ROOT/store/messages.db-wal"
 
 info "Removing agent sessions..."
 rm -rf "$PROJECT_ROOT/data/sessions"
@@ -85,13 +93,16 @@ rm -rf "$PROJECT_ROOT/data/sessions"
 info "Removing IPC state..."
 rm -rf "$PROJECT_ROOT/data/ipc"
 
+info "Removing remote control state..."
+rm -f "$PROJECT_ROOT/data/remote-control.json"
+rm -f "$PROJECT_ROOT/data/remote-control.stdout"
+rm -f "$PROJECT_ROOT/data/remote-control.stderr"
+
 info "Removing group data (preserving groups/global/)..."
 find "$PROJECT_ROOT/groups" -mindepth 1 -maxdepth 1 -type d ! -name global -exec rm -rf {} +
 
 info "Removing application logs..."
-rm -f "$PROJECT_ROOT/logs/nanoclaw.log"
-rm -f "$PROJECT_ROOT/logs/nanoclaw.error.log"
-rm -f "$PROJECT_ROOT/logs/setup.log"
+rm -rf "$PROJECT_ROOT/logs"
 
 info "Removing user config..."
 rm -rf "$CONFIG_DIR"
