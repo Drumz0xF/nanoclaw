@@ -5,6 +5,8 @@ import { OneCLI } from '@onecli-sh/sdk';
 
 import {
   ASSISTANT_NAME,
+  CREDENTIAL_PROXY_PORT,
+  DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   ONECLI_URL,
@@ -364,6 +366,7 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: ASSISTANT_NAME,
+        priorityAccount: group.priorityAccount,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -514,11 +517,50 @@ function ensureContainerSystemRunning(): void {
   cleanupOrphans();
 }
 
+/**
+ * Write available Priority ERP account names to the main group's IPC directory.
+ * The list_priority_accounts MCP tool reads this file during onboarding.
+ * Silently skips if accounts.json is not found (Priority MCP not configured).
+ */
+function writePriorityAccountsList(): void {
+  // Look for accounts.json via env var (set in docker-compose.yml)
+  const accountsPath = process.env.PRIORITY_ACCOUNTS_FILE;
+
+  if (!accountsPath) {
+    logger.debug('PRIORITY_ACCOUNTS_FILE not set, skipping priority accounts sync');
+    return;
+  }
+
+  try {
+    const data = JSON.parse(fs.readFileSync(accountsPath, 'utf-8'));
+    const accountNames = Object.keys(data.accounts || {});
+
+    // Find the main group's IPC directory
+    const mainGroup = Object.values(registeredGroups).find((g) => g.isMain);
+    if (!mainGroup) return;
+
+    const ipcDir = path.join(DATA_DIR, 'ipc', mainGroup.folder);
+    fs.mkdirSync(ipcDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(ipcDir, 'priority_accounts.json'),
+      JSON.stringify(accountNames, null, 2),
+    );
+    logger.info(
+      { accountCount: accountNames.length },
+      'Priority accounts list written for onboarding',
+    );
+  } catch (err) {
+    logger.warn({ err }, 'Failed to write Priority accounts list');
+  }
+}
+
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  writePriorityAccountsList();
+  restoreRemoteControl();
 
   // Ensure OneCLI agents exist for all registered groups.
   // Recovers from missed creates (e.g. OneCLI was down at registration time).

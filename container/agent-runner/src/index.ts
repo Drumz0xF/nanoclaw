@@ -29,6 +29,7 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  priorityAccount?: string;
 }
 
 // --- Priority ERP write confirmation safeguard ---
@@ -552,6 +553,40 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Build MCP servers config — only include priority-erp if group has an account
+  const mcpServers: Record<string, unknown> = {
+    nanoclaw: {
+      command: 'node',
+      args: [mcpServerPath],
+      env: {
+        NANOCLAW_CHAT_JID: containerInput.chatJid,
+        NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+        NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+      },
+    },
+  };
+  if (containerInput.priorityAccount) {
+    mcpServers['priority-erp'] = {
+      type: 'http' as const,
+      url: `http://priority-mcp:8000/mcp/${containerInput.priorityAccount}`,
+    };
+  }
+
+  // Build allowed tools — only include priority-erp tools if account is configured
+  const allowedTools = [
+    'Bash',
+    'Read', 'Write', 'Edit', 'Glob', 'Grep',
+    'WebSearch', 'WebFetch',
+    'Task', 'TaskOutput', 'TaskStop',
+    'TeamCreate', 'TeamDelete', 'SendMessage',
+    'TodoWrite', 'ToolSearch', 'Skill',
+    'NotebookEdit',
+    'mcp__nanoclaw__*',
+  ];
+  if (containerInput.priorityAccount) {
+    allowedTools.push('mcp__priority-erp__*');
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -562,36 +597,12 @@ async function runQuery(
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
-      allowedTools: [
-        'Bash',
-        'Read', 'Write', 'Edit', 'Glob', 'Grep',
-        'WebSearch', 'WebFetch',
-        'Task', 'TaskOutput', 'TaskStop',
-        'TeamCreate', 'TeamDelete', 'SendMessage',
-        'TodoWrite', 'ToolSearch', 'Skill',
-        'NotebookEdit',
-        'mcp__nanoclaw__*',
-        'mcp__priority-erp__*'
-      ],
+      allowedTools,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
       settingSources: ['project', 'user'],
-      mcpServers: {
-        nanoclaw: {
-          command: 'node',
-          args: [mcpServerPath],
-          env: {
-            NANOCLAW_CHAT_JID: containerInput.chatJid,
-            NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-            NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
-          },
-        },
-        'priority-erp': {
-          type: 'http' as const,
-          url: 'http://host.docker.internal:8000/mcp',
-        },
-      },
+      mcpServers,
       hooks: {
         PreToolUse: [{ hooks: [createPreToolUseHook(containerInput)] }],
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

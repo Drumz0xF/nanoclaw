@@ -305,12 +305,15 @@ server.tool(
   'register_group',
   `Register a new chat/group so the agent can respond to messages there. Main group only.
 
-Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.`,
+Use available_groups.json to find the JID for a group. The folder name must be channel-prefixed: "{channel}_{group-name}" (e.g., "whatsapp_family-chat", "telegram_dev-team", "discord_general"). Use lowercase with hyphens for the group name part.
+
+Priority ERP: Optionally assign a Priority ERP account to give the group access to Priority tools. Use list_priority_accounts to see available accounts. Once set, the account CANNOT be changed — choose carefully.`,
   {
     jid: z.string().describe('The chat JID (e.g., "120363336345536173@g.us", "tg:-1001234567890", "dc:1234567890123456")'),
     name: z.string().describe('Display name for the group'),
     folder: z.string().describe('Channel-prefixed folder name (e.g., "whatsapp_family-chat", "telegram_dev-team")'),
     trigger: z.string().describe('Trigger word (e.g., "@Andy")'),
+    priority_account: z.string().optional().describe('Priority ERP account name. Gives the group access to Priority tools using this account. IMMUTABLE after registration. Use list_priority_accounts to see available accounts.'),
   },
   async (args) => {
     if (!isMain) {
@@ -320,7 +323,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
       };
     }
 
-    const data = {
+    const data: Record<string, unknown> = {
       type: 'register_group',
       jid: args.jid,
       name: args.name,
@@ -328,12 +331,56 @@ Use available_groups.json to find the JID for a group. The folder name must be c
       trigger: args.trigger,
       timestamp: new Date().toISOString(),
     };
+    if (args.priority_account) {
+      data.priorityAccount = args.priority_account;
+    }
 
     writeIpcFile(TASKS_DIR, data);
 
+    const priorityNote = args.priority_account
+      ? ` Priority ERP account: ${args.priority_account}.`
+      : '';
     return {
-      content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
+      content: [{ type: 'text' as const, text: `Group "${args.name}" registered.${priorityNote} It will start receiving messages immediately.` }],
     };
+  },
+);
+
+server.tool(
+  'list_priority_accounts',
+  'List available Priority ERP accounts for group registration. Main group only. Use this before register_group to see which accounts can be assigned.',
+  {},
+  async () => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can list Priority accounts.' }],
+        isError: true,
+      };
+    }
+
+    const accountsFile = path.join(IPC_DIR, 'priority_accounts.json');
+    if (!fs.existsSync(accountsFile)) {
+      return {
+        content: [{ type: 'text' as const, text: 'Priority MCP not configured or accounts file not found. No Priority accounts available.' }],
+      };
+    }
+
+    try {
+      const accounts: string[] = JSON.parse(fs.readFileSync(accountsFile, 'utf-8'));
+      if (accounts.length === 0) {
+        return {
+          content: [{ type: 'text' as const, text: 'No Priority accounts configured.' }],
+        };
+      }
+      return {
+        content: [{ type: 'text' as const, text: `Available Priority ERP accounts:\n${accounts.map(a => `  - ${a}`).join('\n')}` }],
+      };
+    } catch {
+      return {
+        content: [{ type: 'text' as const, text: 'Error reading Priority accounts file.' }],
+        isError: true,
+      };
+    }
   },
 );
 

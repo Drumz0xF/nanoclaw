@@ -43,6 +43,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  priorityAccount?: string;
 }
 
 export interface ContainerOutput {
@@ -229,6 +230,9 @@ async function buildContainerArgs(
   agentIdentifier?: string,
 ): Promise<string[]> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
+
+  // Connect to nanoclaw-net so agent containers can reach MCP servers
+  args.push('--network', 'nanoclaw-net');
 
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);

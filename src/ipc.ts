@@ -173,6 +173,7 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    priorityAccount?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -449,6 +450,7 @@ export async function processTaskIpc(
           added_at: new Date().toISOString(),
           containerConfig: data.containerConfig,
           requiresTrigger: data.requiresTrigger,
+          priorityAccount: data.priorityAccount,
         });
       } else {
         logger.warn(

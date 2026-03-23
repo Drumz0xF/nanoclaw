@@ -126,6 +126,26 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add priority_account column if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN priority_account TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // Enforce priority_account immutability at the DB level
+  database.exec(`
+    CREATE TRIGGER IF NOT EXISTS prevent_priority_account_change
+    BEFORE UPDATE OF priority_account ON registered_groups
+    WHEN OLD.priority_account IS NOT NULL
+      AND NEW.priority_account IS NOT OLD.priority_account
+    BEGIN
+      SELECT RAISE(ABORT, 'Cannot change priority_account once set');
+    END
+  `);
+
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
@@ -571,6 +591,7 @@ export function getRegisteredGroup(
         container_config: string | null;
         requires_trigger: number | null;
         is_main: number | null;
+        priority_account: string | null;
       }
     | undefined;
   if (!row) return undefined;
@@ -593,6 +614,7 @@ export function getRegisteredGroup(
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
+    priorityAccount: row.priority_account ?? undefined,
   };
 }
 
@@ -600,9 +622,22 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
+
+  // Immutability: once priority_account is set, it cannot be changed or removed
+  const existing = getRegisteredGroup(jid);
+  if (
+    existing?.priorityAccount &&
+    group.priorityAccount !== existing.priorityAccount
+  ) {
+    throw new Error(
+      `Cannot change Priority account for group "${jid}" ` +
+        `(current: "${existing.priorityAccount}", requested: "${group.priorityAccount}")`,
+    );
+  }
+
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, priority_account)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -612,6 +647,7 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.containerConfig ? JSON.stringify(group.containerConfig) : null,
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
     group.isMain ? 1 : 0,
+    group.priorityAccount ?? null,
   );
 }
 
@@ -625,6 +661,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     container_config: string | null;
     requires_trigger: number | null;
     is_main: number | null;
+    priority_account: string | null;
   }>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
@@ -646,6 +683,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,
+      priorityAccount: row.priority_account ?? undefined,
     };
   }
   return result;

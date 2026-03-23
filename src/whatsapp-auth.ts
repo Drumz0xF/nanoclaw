@@ -121,10 +121,10 @@ async function connectSocket(
         fs.writeFileSync(STATUS_FILE, 'failed:qr_timeout');
         console.log('\n✗ QR code timed out. Please try again.');
         process.exit(1);
-      } else if (reason === 515) {
-        // 515 = stream error, often happens after pairing succeeds but before
-        // registration completes. Reconnect to finish the handshake.
-        console.log('\n⟳ Stream error (515) after pairing — reconnecting...');
+      } else if (reason === 515 || reason === 440) {
+        // 515 = stream error, 440 = conflict/replaced — both can happen after
+        // pairing succeeds but before registration completes. Reconnect.
+        console.log(`\n⟳ Stream error (${reason}) after pairing — reconnecting...`);
         connectSocket(phoneNumber, true);
       } else {
         fs.writeFileSync(STATUS_FILE, `failed:${reason || 'unknown'}`);
@@ -140,11 +140,35 @@ async function connectSocket(
         fs.unlinkSync(QR_FILE);
       } catch {}
       console.log('\n✓ Successfully authenticated with WhatsApp!');
-      console.log('  Credentials saved to store/auth/');
-      console.log('  You can now start the NanoClaw service.\n');
+      console.log('  Waiting for registration to complete...');
 
-      // Give it a moment to save credentials, then exit
-      setTimeout(() => process.exit(0), 1000);
+      // Wait for creds.registered to become true (up to 15s)
+      const checkRegistered = async () => {
+        for (let i = 0; i < 30; i++) {
+          await new Promise((r) => setTimeout(r, 500));
+          try {
+            const c = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, 'creds.json'), 'utf-8'));
+            if (c.registered) {
+              console.log('  Registration complete!');
+              console.log('  Credentials saved to store/auth/');
+              console.log('  You can now start the NanoClaw service.\n');
+              process.exit(0);
+            }
+          } catch { /* creds not saved yet */ }
+        }
+        // Timeout — force registered and exit
+        console.warn('  WARNING: Registration timeout (15s). Force-writing registered=true.');
+        console.warn('  If WhatsApp is not connected, delete store/auth/ and re-run.');
+        try {
+          const c = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, 'creds.json'), 'utf-8'));
+          c.registered = true;
+          fs.writeFileSync(path.join(AUTH_DIR, 'creds.json'), JSON.stringify(c, null, 2));
+        } catch { /* best effort */ }
+        console.log('  Credentials saved to store/auth/');
+        console.log('  You can now start the NanoClaw service.\n');
+        process.exit(0);
+      };
+      checkRegistered();
     }
   });
 

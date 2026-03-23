@@ -172,8 +172,10 @@ export class WhatsAppChannel implements Channel {
     this.sock.ev.on('creds.update', saveCreds);
 
     this.sock.ev.on('messages.upsert', async ({ messages }) => {
+      logger.debug({ count: messages.length }, 'messages.upsert event received');
       for (const msg of messages) {
         try {
+          logger.debug({ remoteJid: msg.key.remoteJid, fromMe: msg.key.fromMe, hasMessage: !!msg.message, messageType: msg.message ? Object.keys(msg.message).join(',') : 'none' }, 'Processing message');
           if (!msg.message) continue;
           // Unwrap container types (viewOnceMessageV2, ephemeralMessage,
           // editedMessage, etc.) so that conversation, extendedTextMessage,

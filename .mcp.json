@@ -1,3 +1,7 @@
 {
-  "mcpServers": {}
+  "mcpServers": {
+    "priority-erp": {
+      "url": "http://host.docker.internal:8000/mcp"
+    }
+  }
 }

@@ -8,6 +8,7 @@ import {
   getAllRegisteredGroups,
   getMessagesSince,
   getNewMessages,
+  getRegisteredGroup,
   getTaskById,
   setRegisteredGroup,
   storeChatMetadata,
@@ -480,5 +481,134 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+// --- RegisteredGroup priorityAccount ---
+
+describe('registered group priorityAccount', () => {
+  it('persists priorityAccount through set/get round-trip', () => {
+    setRegisteredGroup('group@g.us', {
+      name: 'Sales Team',
+      folder: 'whatsapp_sales',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      priorityAccount: 'demo',
+    });
+
+    const groups = getAllRegisteredGroups();
+    const group = groups['group@g.us'];
+    expect(group).toBeDefined();
+    expect(group.priorityAccount).toBe('demo');
+  });
+
+  it('omits priorityAccount when not set', () => {
+    setRegisteredGroup('group@g.us', {
+      name: 'Family Chat',
+      folder: 'whatsapp_family',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    const groups = getAllRegisteredGroups();
+    expect(groups['group@g.us'].priorityAccount).toBeUndefined();
+  });
+
+  it('throws when changing a non-null priorityAccount', () => {
+    setRegisteredGroup('group@g.us', {
+      name: 'Sales Team',
+      folder: 'whatsapp_sales',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      priorityAccount: 'demo',
+    });
+
+    expect(() =>
+      setRegisteredGroup('group@g.us', {
+        name: 'Sales Team',
+        folder: 'whatsapp_sales',
+        trigger: '@Andy',
+        added_at: '2024-01-01T00:00:00.000Z',
+        priorityAccount: 'production',
+      }),
+    ).toThrow(/Cannot change Priority account/);
+  });
+
+  it('allows re-registration with the same priorityAccount', () => {
+    setRegisteredGroup('group@g.us', {
+      name: 'Sales Team',
+      folder: 'whatsapp_sales',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      priorityAccount: 'demo',
+    });
+
+    // Should NOT throw — same account
+    setRegisteredGroup('group@g.us', {
+      name: 'Sales Team Updated',
+      folder: 'whatsapp_sales',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      priorityAccount: 'demo',
+    });
+
+    const groups = getAllRegisteredGroups();
+    expect(groups['group@g.us'].name).toBe('Sales Team Updated');
+    expect(groups['group@g.us'].priorityAccount).toBe('demo');
+  });
+
+  it('allows setting priorityAccount when existing is null', () => {
+    setRegisteredGroup('group@g.us', {
+      name: 'Family Chat',
+      folder: 'whatsapp_family',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    // Setting priority account on a group that didn't have one — allowed
+    setRegisteredGroup('group@g.us', {
+      name: 'Family Chat',
+      folder: 'whatsapp_family',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      priorityAccount: 'demo',
+    });
+
+    const groups = getAllRegisteredGroups();
+    expect(groups['group@g.us'].priorityAccount).toBe('demo');
+  });
+
+  it('throws when trying to remove a set priorityAccount', () => {
+    setRegisteredGroup('group@g.us', {
+      name: 'Sales Team',
+      folder: 'whatsapp_sales',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      priorityAccount: 'demo',
+    });
+
+    // Trying to re-register without priorityAccount (undefined) should throw
+    expect(() =>
+      setRegisteredGroup('group@g.us', {
+        name: 'Sales Team',
+        folder: 'whatsapp_sales',
+        trigger: '@Andy',
+        added_at: '2024-01-01T00:00:00.000Z',
+      }),
+    ).toThrow(/Cannot change Priority account/);
+  });
+
+  it('getRegisteredGroup returns priorityAccount', () => {
+    setRegisteredGroup('group@g.us', {
+      name: 'Sales Team',
+      folder: 'whatsapp_sales',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      priorityAccount: 'production',
+    });
+
+    const group = getRegisteredGroup('group@g.us');
+    expect(group).toBeDefined();
+    expect(group!.priorityAccount).toBe('production');
   });
 });
