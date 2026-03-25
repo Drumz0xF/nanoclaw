@@ -527,7 +527,9 @@ function writePriorityAccountsList(): void {
   const accountsPath = process.env.PRIORITY_ACCOUNTS_FILE;
 
   if (!accountsPath) {
-    logger.debug('PRIORITY_ACCOUNTS_FILE not set, skipping priority accounts sync');
+    logger.debug(
+      'PRIORITY_ACCOUNTS_FILE not set, skipping priority accounts sync',
+    );
     return;
   }
 

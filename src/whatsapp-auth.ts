@@ -124,7 +124,9 @@ async function connectSocket(
       } else if (reason === 515 || reason === 440) {
         // 515 = stream error, 440 = conflict/replaced — both can happen after
         // pairing succeeds but before registration completes. Reconnect.
-        console.log(`\n⟳ Stream error (${reason}) after pairing — reconnecting...`);
+        console.log(
+          `\n⟳ Stream error (${reason}) after pairing — reconnecting...`,
+        );
         connectSocket(phoneNumber, true);
       } else {
         fs.writeFileSync(STATUS_FILE, `failed:${reason || 'unknown'}`);
@@ -147,23 +149,38 @@ async function connectSocket(
         for (let i = 0; i < 30; i++) {
           await new Promise((r) => setTimeout(r, 500));
           try {
-            const c = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, 'creds.json'), 'utf-8'));
+            const c = JSON.parse(
+              fs.readFileSync(path.join(AUTH_DIR, 'creds.json'), 'utf-8'),
+            );
             if (c.registered) {
               console.log('  Registration complete!');
               console.log('  Credentials saved to store/auth/');
               console.log('  You can now start the NanoClaw service.\n');
               process.exit(0);
             }
-          } catch { /* creds not saved yet */ }
+          } catch {
+            /* creds not saved yet */
+          }
         }
         // Timeout — force registered and exit
-        console.warn('  WARNING: Registration timeout (15s). Force-writing registered=true.');
-        console.warn('  If WhatsApp is not connected, delete store/auth/ and re-run.');
+        console.warn(
+          '  WARNING: Registration timeout (15s). Force-writing registered=true.',
+        );
+        console.warn(
+          '  If WhatsApp is not connected, delete store/auth/ and re-run.',
+        );
         try {
-          const c = JSON.parse(fs.readFileSync(path.join(AUTH_DIR, 'creds.json'), 'utf-8'));
+          const c = JSON.parse(
+            fs.readFileSync(path.join(AUTH_DIR, 'creds.json'), 'utf-8'),
+          );
           c.registered = true;
-          fs.writeFileSync(path.join(AUTH_DIR, 'creds.json'), JSON.stringify(c, null, 2));
-        } catch { /* best effort */ }
+          fs.writeFileSync(
+            path.join(AUTH_DIR, 'creds.json'),
+            JSON.stringify(c, null, 2),
+          );
+        } catch {
+          /* best effort */
+        }
         console.log('  Credentials saved to store/auth/');
         console.log('  You can now start the NanoClaw service.\n');
         process.exit(0);
